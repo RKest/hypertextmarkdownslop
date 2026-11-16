@@ -454,7 +454,7 @@ lineage <span class="k">|=</span> {runtime_name, card_name, framework_root_name}
         </div>
 
         <div class="p-5 space-y-3">
-          <div class="flex flex-wrap items-center gap-2"><p class="font-semibold">Series</p><span class="chip bg-violet-100 text-violet-800">own spend: proposal never grows</span><span class="chip bg-slate-200 text-slate-700">total: depends on sharing</span></div>
+          <div class="flex flex-wrap items-center gap-2"><p class="font-semibold">Series</p><span class="chip bg-violet-100 text-violet-800">proposal better</span></div>
           <div class="space-y-2 text-sm">
             <p class="text-slate-600">Leading puts <code>main_agent.name</code> on the existing counters, so they grow with sharing. The proposal keeps them at one agent per series and pays only on the new roll-up, which is keyed by one agent and never multiplied by main agents.</p>
             <div class="grid grid-cols-3 gap-2">
@@ -472,9 +472,6 @@ lineage <span class="k">|=</span> {runtime_name, card_name, framework_root_name}
                 <tr><td class="py-1.5 pr-2 font-sans text-sm">inference.usage.rollup.* <span class="text-slate-400">× 2</span></td>
                   <td class="rounded-l bg-slate-50 px-2 py-1.5 text-slate-400">—</td>
                   <td class="rounded-r bg-violet-50 px-2 py-1.5"><span class="text-violet-800">A × K → A × K</span><br><span class="text-slate-500">500 → 500</span></td></tr>
-                <tr class="font-semibold"><td class="py-1.5 pr-2 font-sans text-sm">total</td>
-                  <td class="rounded-l bg-amber-100 px-2 py-1.5 text-amber-900">1,250 → 12,500</td>
-                  <td class="rounded-r bg-violet-100 px-2 py-1.5 text-violet-900">1,750 → 1,750</td></tr>
               </tbody>
             </table>
             <p class="text-xs text-slate-500">Series per counter; other attributes multiply both sides equally. Lower: each agent under one main agent. Upper: every agent under every main agent.</p>
