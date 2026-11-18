@@ -55,69 +55,41 @@
   <section id="summary" class="space-y-5">
     <h2 class="text-3xl font-bold">Summary</h2>
 
-    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4 space-y-3">
-      <p class="text-sm font-medium text-slate-600">One request. Every layer records a <code>gen_ai.invoke_agent.duration</code> point. The CrewAI crew runs inside a function tool and its instrumentation doesn't <a class="term" href="#t-participate">participate</a>:</p>
-<pre class="code"><code><span class="f">invoke_runner</span>                                 <span class="n">8.0 s</span>   <span class="ok">participates</span>
-└── <span class="f">invoke_agent Concierge</span>                    <span class="n">7.9 s</span>   <span class="ok">participates</span>
-    └── <span class="k">execute_tool</span> research               <span class="c"># AgentTool</span>
-        └── <span class="f">invoke_agent Researcher</span>           <span class="n">5.0 s</span>   <span class="ok">participates</span>
-            └── <span class="k">execute_tool</span> summarize      <span class="c"># FunctionTool</span>
-                └── <span class="f">invoke_workflow crew</span>      <span class="n">2.0 s</span>   <span class="bad">doesn't participate</span>  <span class="mark">◀ nested, can't say so</span></code></pre>
-      <p class="text-sm text-slate-600">The end-to-end latency dashboard should get exactly one point per request: <span class="font-mono">8.0 s</span>.</p>
+    <div class="rounded-xl bg-white border-l-4 border-violet-400 shadow-sm p-4 text-sm space-y-2">
+      <p class="font-semibold">"root" comes out slightly ahead.</p>
+      <p class="text-slate-600">Both valences break when some instrumentation in the call chain doesn't set the attribute. They differ in <em>where</em> that instrumentation has to be for the end-to-end query to go wrong:</p>
+      <ul class="list-disc pl-5 text-slate-600 space-y-1">
+        <li><strong>root</strong> is wrong only when an invocation <em>above</em> a participating one doesn't set it.</li>
+        <li><strong>nested</strong> is wrong when <em>any</em> invocation that is actually nested doesn't set it, at any depth.</li>
+      </ul>
+      <p class="text-slate-600">Every way root goes wrong, nested goes wrong too. The reverse doesn't hold.</p>
     </div>
 
     <div class="grid gap-6 lg:grid-cols-2">
-      <div class="rounded-2xl border-2 border-amber-300 bg-amber-50/60 p-5 space-y-4">
-        <div class="flex items-center gap-2">
-          <span class="chip bg-amber-400 text-amber-950">#689 today</span><span class="text-xs text-amber-800"><code>is_nested</code>, conditionally required when nested</span>
-        </div>
-        <div>
-          <p class="text-sm font-medium text-amber-800 mb-1">records:</p>
-<pre class="code"><code><span class="f">gen_ai.invoke_agent.duration</span>
-  <span class="n">8.0</span> {<span class="a">operation</span>=<span class="s">invoke_runner</span>}
-  <span class="n">7.9</span> {<span class="a">agent</span>=<span class="s">Concierge</span>,  <span class="a">is_nested</span>=<span class="n">true</span>}
-  <span class="n">5.0</span> {<span class="a">agent</span>=<span class="s">Researcher</span>, <span class="a">is_nested</span>=<span class="n">true</span>}
-  <span class="n">2.0</span> {<span class="a">operation</span>=<span class="s">invoke_workflow</span>}       <span class="mark">◀ unmarked</span></code></pre>
-        </div>
-        <div>
-          <p class="text-sm font-medium text-amber-800 mb-1">end-to-end query:</p>
-<pre class="code"><code><span class="a">is_nested</span> <span class="k">!=</span> <span class="n">true</span>   <span class="c"># →</span> {<span class="n">8.0</span>, <span class="n">2.0</span>}  <span class="bad">✗ 2 points/request, mean 5.0 s</span>
-<span class="a">is_nested</span> <span class="k">==</span> <span class="n">false</span>  <span class="c"># →</span> {}          <span class="bad">✗ runner MAY skip false</span></code></pre>
-        </div>
-        <div class="flex flex-wrap gap-2">
-          <span class="chip bg-emerald-100 text-emerald-800">✓ every layer participates</span>
-          <span class="chip bg-rose-100 text-rose-800">✗ one silent layer skews it, silently</span>
-          <span class="chip bg-rose-100 text-rose-800">✗ <code>!=</code> differs across backends</span>
-        </div>
+      <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5 space-y-3">
+        <p class="text-sm font-semibold">An inner invocation doesn't set it</p>
+<pre class="code"><code><span class="f">invoke_runner</span>          <span class="n">8.0 s</span>  <span class="ok">sets it</span>
+└── <span class="f">invoke_workflow crew</span> <span class="n">2.0 s</span>  <span class="bad">doesn't</span>
+
+<span class="a">nested</span> <span class="k">!=</span> <span class="n">true</span>   <span class="c"># →</span> {<span class="n">8.0</span>, <span class="n">2.0</span>}  <span class="bad">✗</span>
+<span class="a">root</span> <span class="k">==</span> <span class="n">true</span>     <span class="c"># →</span> {<span class="n">8.0</span>}       <span class="ok">✓</span></code></pre>
+        <p class="text-sm text-slate-600">Under nested, the crew's point has no attribute and counts as top-level. Under root, it has no attribute and is left out.</p>
       </div>
 
-      <div class="rounded-2xl border-2 border-violet-400 bg-violet-50/60 p-5 space-y-4">
-        <div class="flex items-center gap-2">
-          <span class="chip bg-violet-600 text-white">reversed</span><span class="text-xs text-violet-800"><code>is_root</code>, set by every participant</span>
-        </div>
-        <div>
-          <p class="text-sm font-medium text-violet-800 mb-1">records:</p>
-<pre class="code"><code><span class="f">gen_ai.invoke_agent.duration</span>
-  <span class="n">8.0</span> {<span class="a">operation</span>=<span class="s">invoke_runner</span>, <span class="a">is_root</span>=<span class="n">true</span>}
-  <span class="n">7.9</span> {<span class="a">agent</span>=<span class="s">Concierge</span>,  <span class="a">is_root</span>=<span class="n">false</span>}
-  <span class="n">5.0</span> {<span class="a">agent</span>=<span class="s">Researcher</span>, <span class="a">is_root</span>=<span class="n">false</span>}
-  <span class="n">2.0</span> {<span class="a">operation</span>=<span class="s">invoke_workflow</span>}       <span class="mark">◀ unmarked</span></code></pre>
-        </div>
-        <div>
-          <p class="text-sm font-medium text-violet-800 mb-1">end-to-end query:</p>
-<pre class="code"><code><span class="a">is_root</span> <span class="k">==</span> <span class="n">true</span>     <span class="c"># →</span> {<span class="n">8.0</span>}       <span class="ok">✓ 1 point/request</span></code></pre>
-        </div>
-        <div class="flex flex-wrap gap-2">
-          <span class="chip bg-emerald-100 text-emerald-800">✓ outermost layer alone suffices</span>
-          <span class="chip bg-emerald-100 text-emerald-800">✓ non-participants drop out</span>
-          <span class="chip bg-rose-100 text-rose-800">✗ single-layer non-participants drop out too</span>
-        </div>
+      <div class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5 space-y-3">
+        <p class="text-sm font-semibold">An outer invocation doesn't set it</p>
+<pre class="code"><code><span class="f">invoke_workflow graph</span>   <span class="n">9.0 s</span>  <span class="bad">doesn't</span>
+└── <span class="f">invoke_agent Concierge</span> <span class="n">7.9 s</span>  <span class="ok">sets it</span>
+
+<span class="a">nested</span> <span class="k">!=</span> <span class="n">true</span>   <span class="c"># →</span> {<span class="n">9.0</span>, <span class="n">7.9</span>}  <span class="bad">✗</span>
+<span class="a">root</span> <span class="k">==</span> <span class="n">true</span>     <span class="c"># →</span> {<span class="n">7.9</span>}       <span class="bad">✗</span></code></pre>
+        <p class="text-sm text-slate-600">Concierge can't see the graph, so it reports itself as top-level under both. Both results are wrong.</p>
       </div>
     </div>
 
-    <div class="rounded-xl bg-white border-l-4 border-violet-400 shadow-sm p-4 text-sm space-y-1">
-      <p class="font-semibold">Recommendation: reverse the valence.</p>
-      <p class="text-slate-600">The end-to-end query selects top-level invocations, so the value it filters on should be the one instrumentations must set. Then a component that doesn't participate drops out of the dashboard instead of adding wrong points to it. Neither valence fixes a non-participating <em>outer</em> layer or lost context; those fail the same way under both (<a class="underline" href="#failures">cases 3 and 4</a>).</p>
+    <div class="rounded-xl bg-white border border-slate-200 shadow-sm p-4 text-sm space-y-1">
+      <p class="font-semibold">What root costs</p>
+      <p class="text-slate-600">An app whose only instrumentation doesn't set the attribute gets no points from <code>root == true</code>; nested counts it correctly because nothing is nested. Root's failure here is an empty series rather than a wrong number. Lost context (<a class="underline" href="#c4">case 4</a>) and cross-process calls (<a class="underline" href="#c8">case 8</a>) break both the same way.</p>
     </div>
   </section>
 
