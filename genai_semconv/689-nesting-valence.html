@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>is_nested or is_root? Picking the valence for #689</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    html { scroll-behavior: smooth; }
+    code { font-size: 0.85em; background: rgb(241 245 249); padding: 0 0.3rem; border-radius: 0.3rem; }
+    pre.code { background: #0f172a; color: #e2e8f0; border-radius: 0.75rem; padding: 0.9rem 1rem; font-size: 11.5px; line-height: 1.7; overflow-x: auto; }
+    pre.code code { background: none; padding: 0; font-size: inherit; }
+    .f { color: #7dd3fc; }
+    .s { color: #86efac; }
+    .n { color: #fdba74; }
+    .c { color: #64748b; font-style: italic; }
+    .k { color: #f472b6; }
+    .a { color: #c4b5fd; }
+    .add { background: rgba(34, 197, 94, 0.14); display: block; margin: 0 -1rem; padding: 0 1rem; }
+    .del { background: rgba(244, 63, 94, 0.14); display: block; margin: 0 -1rem; padding: 0 1rem; }
+    .mark { color: #facc15; font-weight: 700; }
+    .bad { color: #fda4af; }
+    .ok  { color: #86efac; }
+    .chip { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.1rem 0.6rem; border-radius: 9999px; font-size: 0.8rem; font-weight: 500; }
+    th, td { padding: 0.45rem 0.5rem; text-align: left; vertical-align: top; }
+    a.term { text-decoration: underline dotted; text-underline-offset: 3px; }
+    details > summary { list-style: none; cursor: pointer; }
+    details > summary::-webkit-details-marker { display: none; }
+    details[open] .chev { transform: rotate(90deg); }
+  </style>
+</head>
+<body class="bg-gradient-to-b from-slate-50 to-white text-slate-800 font-sans leading-relaxed">
+<main class="max-w-5xl mx-auto px-6 py-12 space-y-16">
+
+  <header class="space-y-4">
+    <div class="flex flex-wrap gap-2">
+      <span class="chip bg-slate-200 text-slate-700">GenAI semantic conventions</span>
+      <span class="chip bg-violet-100 text-violet-800">review</span>
+    </div>
+    <h1 class="text-5xl font-extrabold bg-gradient-to-r from-violet-700 via-fuchsia-600 to-amber-500 bg-clip-text text-transparent pb-1"><code class="bg-transparent p-0 text-[0.8em]">is_nested</code> or <code class="bg-transparent p-0 text-[0.8em]">is_root</code>?</h1>
+    <p class="text-slate-500">Which value of the nesting boolean in
+      <a class="underline" href="https://github.com/open-telemetry/semantic-conventions-genai/pull/689">#689</a>
+      should be the one instrumentations must set. Follows up on
+      <a class="underline" href="https://github.com/open-telemetry/semantic-conventions-genai/pull/571">#571</a>.</p>
+    <nav class="flex flex-wrap gap-2 text-sm">
+      <a href="#summary" class="chip bg-white border border-slate-200 hover:bg-slate-100">Summary</a>
+      <a href="#terms" class="chip bg-white border border-slate-200 hover:bg-slate-100">Terms</a>
+      <a href="#failures" class="chip bg-white border border-slate-200 hover:bg-slate-100">Failure cases</a>
+      <a href="#proposal" class="chip bg-white border border-slate-200 hover:bg-slate-100">Proposal</a>
+      <a href="#alternatives" class="chip bg-white border border-slate-200 hover:bg-slate-100">Alternatives</a>
+    </nav>
+  </header>
+
+  <!-- ───────────────────────── Summary ───────────────────────── -->
+  <section id="summary" class="space-y-5">
+    <h2 class="text-3xl font-bold">Summary</h2>
+
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-4 space-y-3">
+      <p class="text-sm font-medium text-slate-600">One request. Every layer records a <code>gen_ai.invoke_agent.duration</code> point. The CrewAI crew runs inside a function tool and its instrumentation doesn't <a class="term" href="#t-participate">participate</a>:</p>
+<pre class="code"><code><span class="f">invoke_runner</span>                                 <span class="n">8.0 s</span>   <span class="ok">participates</span>
+└── <span class="f">invoke_agent Concierge</span>                    <span class="n">7.9 s</span>   <span class="ok">participates</span>
+    └── <span class="k">execute_tool</span> research               <span class="c"># AgentTool</span>
+        └── <span class="f">invoke_agent Researcher</span>           <span class="n">5.0 s</span>   <span class="ok">participates</span>
+            └── <span class="k">execute_tool</span> summarize      <span class="c"># FunctionTool</span>
+                └── <span class="f">invoke_workflow crew</span>      <span class="n">2.0 s</span>   <span class="bad">doesn't participate</span>  <span class="mark">◀ nested, can't say so</span></code></pre>
+      <p class="text-sm text-slate-600">The end-to-end latency dashboard should get exactly one point per request: <span class="font-mono">8.0 s</span>.</p>
+    </div>
+
+    <div class="grid gap-6 lg:grid-cols-2">
+      <div class="rounded-2xl border-2 border-amber-300 bg-amber-50/60 p-5 space-y-4">
+        <div class="flex items-center gap-2">
+          <span class="chip bg-amber-400 text-amber-950">#689 today</span><span class="text-xs text-amber-800"><code>is_nested</code>, conditionally required when nested</span>
+        </div>
+        <div>
+          <p class="text-sm font-medium text-amber-800 mb-1">records:</p>
+<pre class="code"><code><span class="f">gen_ai.invoke_agent.duration</span>
+  <span class="n">8.0</span> {<span class="a">operation</span>=<span class="s">invoke_runner</span>}
+  <span class="n">7.9</span> {<span class="a">agent</span>=<span class="s">Concierge</span>,  <span class="a">is_nested</span>=<span class="n">true</span>}
+  <span class="n">5.0</span> {<span class="a">agent</span>=<span class="s">Researcher</span>, <span class="a">is_nested</span>=<span class="n">true</span>}
+  <span class="n">2.0</span> {<span class="a">operation</span>=<span class="s">invoke_workflow</span>}       <span class="mark">◀ unmarked</span></code></pre>
+        </div>
+        <div>
+          <p class="text-sm font-medium text-amber-800 mb-1">end-to-end query:</p>
+<pre class="code"><code><span class="a">is_nested</span> <span class="k">!=</span> <span class="n">true</span>   <span class="c"># →</span> {<span class="n">8.0</span>, <span class="n">2.0</span>}  <span class="bad">✗ 2 points/request, mean 5.0 s</span>
+<span class="a">is_nested</span> <span class="k">==</span> <span class="n">false</span>  <span class="c"># →</span> {}          <span class="bad">✗ runner MAY skip false</span></code></pre>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <span class="chip bg-emerald-100 text-emerald-800">✓ every layer participates</span>
+          <span class="chip bg-rose-100 text-rose-800">✗ one silent layer skews it, silently</span>
+          <span class="chip bg-rose-100 text-rose-800">✗ <code>!=</code> differs across backends</span>
+        </div>
+      </div>
+
+      <div class="rounded-2xl border-2 border-violet-400 bg-violet-50/60 p-5 space-y-4">
+        <div class="flex items-center gap-2">
+          <span class="chip bg-violet-600 text-white">reversed</span><span class="text-xs text-violet-800"><code>is_root</code>, set by every participant</span>
+        </div>
+        <div>
+          <p class="text-sm font-medium text-violet-800 mb-1">records:</p>
+<pre class="code"><code><span class="f">gen_ai.invoke_agent.duration</span>
+  <span class="n">8.0</span> {<span class="a">operation</span>=<span class="s">invoke_runner</span>, <span class="a">is_root</span>=<span class="n">true</span>}
+  <span class="n">7.9</span> {<span class="a">agent</span>=<span class="s">Concierge</span>,  <span class="a">is_root</span>=<span class="n">false</span>}
+  <span class="n">5.0</span> {<span class="a">agent</span>=<span class="s">Researcher</span>, <span class="a">is_root</span>=<span class="n">false</span>}
+  <span class="n">2.0</span> {<span class="a">operation</span>=<span class="s">invoke_workflow</span>}       <span class="mark">◀ unmarked</span></code></pre>
+        </div>
+        <div>
+          <p class="text-sm font-medium text-violet-800 mb-1">end-to-end query:</p>
+<pre class="code"><code><span class="a">is_root</span> <span class="k">==</span> <span class="n">true</span>     <span class="c"># →</span> {<span class="n">8.0</span>}       <span class="ok">✓ 1 point/request</span></code></pre>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <span class="chip bg-emerald-100 text-emerald-800">✓ outermost layer alone suffices</span>
+          <span class="chip bg-emerald-100 text-emerald-800">✓ non-participants drop out</span>
+          <span class="chip bg-rose-100 text-rose-800">✗ single-layer non-participants drop out too</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="rounded-xl bg-white border-l-4 border-violet-400 shadow-sm p-4 text-sm space-y-1">
+      <p class="font-semibold">Recommendation: reverse the valence.</p>
+      <p class="text-slate-600">The end-to-end query selects top-level invocations, so the value it filters on should be the one instrumentations must set. Then a component that doesn't participate drops out of the dashboard instead of adding wrong points to it. Neither valence fixes a non-participating <em>outer</em> layer or lost context; those fail the same way under both (<a class="underline" href="#failures">cases 3 and 4</a>).</p>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── Terms ───────────────────────── -->
+  <section id="terms" class="space-y-3">
+    <h2 class="text-2xl font-bold">Terms <span class="text-xs font-normal text-slate-500">click to expand</span></h2>
+    <div class="space-y-1.5">
+
+      <details id="t-participate" class="group bg-white rounded-lg border border-slate-200 shadow-sm hover:bg-violet-50/60 hover:border-violet-300 transition-colors">
+        <summary class="px-3.5 py-2 flex items-baseline gap-2.5 text-sm leading-snug">
+          <span class="chev shrink-0 text-[10px] text-violet-500 transition-transform">▶</span>
+          <div><span class="font-semibold text-slate-900">Participating instrumentation</span> <span class="text-slate-600">— Writes the shared invocation key into context, reads it, and sets the attribute. Anything else emits the metric with the attribute absent.</span></div>
+        </summary>
+        <div class="px-3.5 pb-3.5 pt-2.5 border-t border-slate-100 text-sm text-slate-600 space-y-2">
+          <p>Non-participants today include ADK and Agent Framework native instrumentation (per the #689 description), every instrumentation version released before the attribute, and any framework that never adopts it.</p>
+        </div>
+      </details>
+
+      <details id="t-key" class="group bg-white rounded-lg border border-slate-200 shadow-sm hover:bg-violet-50/60 hover:border-violet-300 transition-colors">
+        <summary class="px-3.5 py-2 flex items-baseline gap-2.5 text-sm leading-snug">
+          <span class="chev shrink-0 text-[10px] text-violet-500 transition-transform">▶</span>
+          <div><span class="font-semibold text-slate-900">Shared context key</span> <span class="text-slate-600">— For one vendor to see another's invocation, both must use the same key. In Python, Java and Go that means a shared package.</span></div>
+        </summary>
+        <div class="px-3.5 pb-3.5 pt-2.5 border-t border-slate-100 grid gap-4 lg:grid-cols-2 items-start text-sm">
+<pre class="code"><code><span class="c"># opentelemetry-api, Python</span>
+<span class="k">def</span> <span class="f">create_key</span>(keyname: str) -&gt; str:
+    <span class="k">return</span> keyname + <span class="s">"-"</span> + str(<span class="f">uuid4</span>())
+
+<span class="c"># opentelemetry-java: ContextKey.named</span>
+<span class="c"># "Multiple different keys with the same</span>
+<span class="c">#  name will be separate keys."</span>
+
+<span class="c"># opentelemetry-js: createContextKey</span>
+<span class="k">return</span> Symbol.<span class="f">for</span>(description);  <span class="c"># shared by name</span></code></pre>
+          <div class="text-slate-600 space-y-2">
+            <p>Only JS shares keys by name. Elsewhere vendors need a common package (or, in Python, an agreed raw string passed to <code>get_value</code>).</p>
+            <p><code>reference_shared.py</code> on the PR branch uses <code>context.create_key("gen_ai.invocation")</code>. That works because every scenario imports the same module; no other package could read the key.</p>
+            <p>This cost is the same under both valences. What differs is <a class="underline" href="#who">who has to pay it</a> for the dashboard to be correct.</p>
+          </div>
+        </div>
+      </details>
+
+      <details id="t-evidence" class="group bg-white rounded-lg border border-slate-200 shadow-sm hover:bg-violet-50/60 hover:border-violet-300 transition-colors">
+        <summary class="px-3.5 py-2 flex items-baseline gap-2.5 text-sm leading-snug">
+          <span class="chev shrink-0 text-[10px] text-violet-500 transition-transform">▶</span>
+          <div><span class="font-semibold text-slate-900">Positive vs negative evidence</span> <span class="text-slate-600">— "Nested" means the key was seen. "Top-level" means it wasn't. <code>is_root=true</code> and <code>is_nested=false</code> are the same claim.</span></div>
+        </summary>
+        <div class="px-3.5 pb-3.5 pt-2.5 border-t border-slate-100 text-sm text-slate-600 space-y-2">
+          <p>Seeing the key is reliable: some participating invocation is active. Not seeing it only means no <em>participating</em> invocation is active. That is the concern behind "don't promise what we can't guarantee (<code>false</code>)".</p>
+          <p>Reversing the valence doesn't make that claim stronger. It changes what <em>absence</em> is lumped with. Under <code>is_nested</code>, absent means "top-level or unknown". Under <code>is_root</code>, absent means "doesn't participate".</p>
+        </div>
+      </details>
+
+      <details id="t-filter" class="group bg-white rounded-lg border border-slate-200 shadow-sm hover:bg-violet-50/60 hover:border-violet-300 transition-colors">
+        <summary class="px-3.5 py-2 flex items-baseline gap-2.5 text-sm leading-snug">
+          <span class="chev shrink-0 text-[10px] text-violet-500 transition-transform">▶</span>
+          <div><span class="font-semibold text-slate-900">Lenient vs strict filter</span> <span class="text-slate-600">— <code>is_nested != true</code> keeps absent points; <code>is_nested == false</code> drops them.</span></div>
+        </summary>
+        <div class="px-3.5 pb-3.5 pt-2.5 border-t border-slate-100 text-sm text-slate-600 space-y-2">
+          <p>#689's motivation section prescribes the lenient filter. The strict filter matches <code>is_root == true</code>, but under #689 <code>false</code> is optional, so it returns little data.</p>
+        </div>
+      </details>
+
+      <details id="t-loud" class="group bg-white rounded-lg border border-slate-200 shadow-sm hover:bg-violet-50/60 hover:border-violet-300 transition-colors">
+        <summary class="px-3.5 py-2 flex items-baseline gap-2.5 text-sm leading-snug">
+          <span class="chev shrink-0 text-[10px] text-violet-500 transition-transform">▶</span>
+          <div><span class="font-semibold text-slate-900">Loud vs silent failure</span> <span class="text-slate-600">— A missing series is noticed and traced to a missing integration. A skewed percentile looks like a real number.</span></div>
+        </summary>
+        <div class="px-3.5 pb-3.5 pt-2.5 border-t border-slate-100 text-sm text-slate-600 space-y-2">
+          <p>Points are dropped per instrumentation, not at random: either all of an agent's top-level points carry the attribute or none do. So a dropped series is complete or empty, and an empty one is easy to spot.</p>
+          <p>Extra points are worse: metrics have no parent link, so the consumer can't remove them afterwards.</p>
+        </div>
+      </details>
+
+    </div>
+  </section>
+
+  <!-- ───────────────────────── Failure cases ───────────────────────── -->
+  <section id="failures" class="space-y-6">
+    <h2 class="text-3xl font-bold">Failure cases</h2>
+    <p class="text-slate-600">What the end-to-end duration query returns. O = outer invocation, I = inner invocation. ✓ = exactly the true top-level points.</p>
+
+    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead class="text-xs text-slate-500 bg-slate-50">
+          <tr><th class="font-medium">#</th><th class="font-medium">Case</th><th class="font-medium">#689 · <code>is_nested != true</code></th><th class="font-medium">#689 · <code>is_nested == false</code></th><th class="font-medium">reversed · <code>is_root == true</code></th></tr>
+        </thead>
+        <tbody>
+          <tr class="border-t border-slate-100"><td>1</td><td><a class="term" href="#c1">O and I participate</a></td>
+            <td class="text-emerald-700">✓</td><td class="text-amber-700">◐ only if O sets optional <code>false</code></td><td class="text-emerald-700">✓</td></tr>
+          <tr class="border-t border-slate-100 bg-violet-50/40"><td>2</td><td><a class="term" href="#c2">I doesn't participate</a></td>
+            <td class="text-rose-700">✗ O + I, silent</td><td class="text-amber-700">◐ only if O sets optional <code>false</code></td><td class="text-emerald-700">✓</td></tr>
+          <tr class="border-t border-slate-100"><td>3</td><td><a class="term" href="#c3">O doesn't participate</a></td>
+            <td class="text-rose-700">✗ O + I</td><td class="text-rose-700">✗ I instead of O</td><td class="text-rose-700">✗ I instead of O</td></tr>
+          <tr class="border-t border-slate-100"><td>4</td><td><a class="term" href="#c4">Context lost between O and I</a></td>
+            <td class="text-rose-700">✗ O + I</td><td class="text-rose-700">✗ O + I</td><td class="text-rose-700">✗ O + I</td></tr>
+          <tr class="border-t border-slate-100 bg-amber-50/40"><td>5</td><td><a class="term" href="#c5">Single layer, doesn't participate</a></td>
+            <td class="text-emerald-700">✓ by accident</td><td class="text-rose-700">✗ empty, loud</td><td class="text-rose-700">✗ empty, loud</td></tr>
+          <tr class="border-t border-slate-100"><td>6</td><td><a class="term" href="#c6">Nothing participates (today)</a></td>
+            <td class="text-rose-700">✗ every layer, silent</td><td class="text-rose-700">✗ empty, loud</td><td class="text-rose-700">✗ empty, loud</td></tr>
+          <tr class="border-t border-slate-100 bg-violet-50/40"><td>7</td><td><a class="term" href="#c7">SQL backend vs PromQL backend</a></td>
+            <td class="text-rose-700">✗ different results</td><td class="text-emerald-700">✓ same</td><td class="text-emerald-700">✓ same</td></tr>
+          <tr class="border-t border-slate-100"><td>8</td><td><a class="term" href="#c8">A2A server across processes</a></td>
+            <td class="text-slate-500">server agent is top-level</td><td class="text-slate-500">same</td><td class="text-slate-500">same</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="flex flex-wrap gap-2 text-sm">
+      <span class="chip bg-violet-100 text-violet-800">reversed better: 2, 7</span>
+      <span class="chip bg-amber-100 text-amber-800">#689 lenient better: 5</span>
+      <span class="chip bg-slate-200 text-slate-700">equally broken: 3, 4, 8</span>
+      <span class="chip bg-slate-200 text-slate-700">6: silent vs loud</span>
+    </div>
+
+    <div class="space-y-1.5">
+
+      <details id="c1" class="group bg-white rounded-lg border border-slate-200 shadow-sm hover:bg-violet-50/60 hover:border-violet-300 transition-colors">
+        <summary class="px-3.5 py-2 flex items-baseline gap-2.5 text-sm leading-snug">
+          <span class="chev shrink-0 text-[10px] text-violet-500 transition-transform">▶</span>
+          <div><span class="font-semibold text-slate-900">1 · O and I participate</span> <span class="text-slate-600">— The case #689's reference scenarios cover. Both valences work.</span></div>
+        </summary>
+        <div class="px-3.5 pb-3.5 pt-2.5 border-t border-slate-100 grid gap-4 lg:grid-cols-2 items-start text-sm">
+<pre class="code"><code><span class="f">invoke_runner</span>               <span class="c"># key absent → top-level</span>
+└── <span class="f">invoke_agent Concierge</span>  <span class="c"># key present → nested</span></code></pre>
+          <p class="text-slate-600">The strict #689 filter only works if the runner sets <code>is_nested=false</code>, which #689 allows but doesn't require. Its reference scenarios never set it (<code>nested_invocation_attributes()</code> "is never set to <code>false</code>").</p>
+        </div>
+      </details>
+
+      <details id="c2" class="group bg-white rounded-lg border border-slate-200 shadow-sm hover:bg-violet-50/60 hover:border-violet-300 transition-colors">
+        <summary class="px-3.5 py-2 flex items-baseline gap-2.5 text-sm leading-snug">
+          <span class="chev shrink-0 text-[10px] text-violet-500 transition-transform">▶</span>
+          <div><span class="font-semibold text-slate-900">2 · I doesn't participate</span> <span class="text-slate-600">— A crew inside a tool, a native-instrumented agent inside a participating runner, an old instrumentation version. The case that decides the valence.</span></div>
+        </summary>
+        <div class="px-3.5 pb-3.5 pt-2.5 border-t border-slate-100 grid gap-4 lg:grid-cols-2 items-start text-sm">
+<pre class="code"><code><span class="f">invoke_runner</span>          <span class="n">8.0 s</span>  <span class="ok">participates</span>
+└── …
+    └── <span class="f">invoke_workflow crew</span> <span class="n">2.0 s</span>  <span class="bad">absent</span>
+
+<span class="c"># #689 lenient</span>   {<span class="n">8.0</span>, <span class="n">2.0</span>}  <span class="bad">✗</span>
+<span class="c"># reversed</span>       {<span class="n">8.0</span>}       <span class="ok">✓</span></code></pre>
+          <div class="text-slate-600 space-y-2">
+            <p>Under #689 the crew's point is indistinguishable from a top-level run. Request count doubles and the mean drops from 8.0 s to 5.0 s. The dashboard gives no sign that anything is wrong.</p>
+            <p>#689 says pydantic-ai, crewai and autogen don't set the attribute because "every invocation is top-level". That holds in the scenarios, not in general: any of them can run inside a tool or a graph node.</p>
+          </div>
+        </div>
+      </details>
+
+      <details id="c3" class="group bg-white rounded-lg border border-slate-200 shadow-sm hover:bg-violet-50/60 hover:border-violet-300 transition-colors">
+        <summary class="px-3.5 py-2 flex items-baseline gap-2.5 text-sm leading-snug">
+          <span class="chev shrink-0 text-[10px] text-violet-500 transition-transform">▶</span>
+          <div><span class="font-semibold text-slate-900">3 · O doesn't participate</span> <span class="text-slate-600">— The gap you raised: an invocation above that isn't in the contract. Neither valence fixes it.</span></div>
+        </summary>
+        <div class="px-3.5 pb-3.5 pt-2.5 border-t border-slate-100 grid gap-4 lg:grid-cols-2 items-start text-sm">
+<pre class="code"><code><span class="f">invoke_workflow graph</span>       <span class="n">9.0 s</span>  <span class="bad">absent</span>
+└── <span class="f">invoke_agent Concierge</span>  <span class="n">7.9 s</span>  <span class="ok">sees no key</span>
+
+<span class="c"># #689 lenient</span>   {<span class="n">9.0</span>, <span class="n">7.9</span>}  <span class="bad">✗ both</span>
+<span class="c"># #689 strict</span>    {<span class="n">7.9</span>}       <span class="bad">✗ wrong layer</span>
+<span class="c"># reversed</span>       {<span class="n">7.9</span>}       <span class="bad">✗ wrong layer</span></code></pre>
+          <p class="text-slate-600">Concierge sees no key and calls itself top-level. The reversed valence gives one point per request, from the wrong layer. #689 lenient gives two. Docs should define the claim as "outermost <em>participating</em> invocation" so consumers know this limit.</p>
+        </div>
+      </details>
+
+      <details id="c4" class="group bg-white rounded-lg border border-slate-200 shadow-sm hover:bg-violet-50/60 hover:border-violet-300 transition-colors">
+        <summary class="px-3.5 py-2 flex items-baseline gap-2.5 text-sm leading-snug">
+          <span class="chev shrink-0 text-[10px] text-violet-500 transition-transform">▶</span>
+          <div><span class="font-semibold text-slate-900">4 · Context lost between O and I</span> <span class="text-slate-600">— Thread pool without context copy, a callback registry, a queue. I looks top-level under both.</span></div>
+        </summary>
+        <div class="px-3.5 pb-3.5 pt-2.5 border-t border-slate-100 grid gap-4 lg:grid-cols-2 items-start text-sm">
+<pre class="code"><code><span class="f">invoke_runner</span>                 <span class="c"># writes key</span>
+  executor.<span class="f">submit</span>(sub.run)     <span class="c"># no copy_context()</span>
+    <span class="f">invoke_agent Researcher</span>   <span class="c"># key absent</span></code></pre>
+          <p class="text-slate-600">This is the "context propagation is tricky" concern from review. It hits both valences the same way, because both read the same key. The broken span parent link is the same bug, so fixing traces fixes this too.</p>
+        </div>
+      </details>
+
+      <details id="c5" class="group bg-white rounded-lg border border-slate-200 shadow-sm hover:bg-violet-50/60 hover:border-violet-300 transition-colors">
+        <summary class="px-3.5 py-2 flex items-baseline gap-2.5 text-sm leading-snug">
+          <span class="chev shrink-0 text-[10px] text-violet-500 transition-transform">▶</span>
+          <div><span class="font-semibold text-slate-900">5 · Single layer, doesn't participate</span> <span class="text-slate-600">— A plain pydantic-ai app. The one case where #689 lenient is better.</span></div>
+        </summary>
+        <div class="px-3.5 pb-3.5 pt-2.5 border-t border-slate-100 grid gap-4 lg:grid-cols-2 items-start text-sm">
+<pre class="code"><code><span class="f">invoke_agent assistant</span>   <span class="n">3.0 s</span>  <span class="bad">absent</span>
+
+<span class="c"># #689 lenient</span>   {<span class="n">3.0</span>}  <span class="ok">✓</span>
+<span class="c"># reversed</span>       {}     <span class="bad">✗ until adopted</span></code></pre>
+          <p class="text-slate-600">#689 gets this right only because nothing is nested. The same app gets case 2 as soon as a sub-agent is added. Under the reversed valence the dashboard is empty, and the fix is to upgrade the one instrumentation that owns it.</p>
+        </div>
+      </details>
+
+      <details id="c6" class="group bg-white rounded-lg border border-slate-200 shadow-sm hover:bg-violet-50/60 hover:border-violet-300 transition-colors">
+        <summary class="px-3.5 py-2 flex items-baseline gap-2.5 text-sm leading-snug">
+          <span class="chev shrink-0 text-[10px] text-violet-500 transition-transform">▶</span>
+          <div><span class="font-semibold text-slate-900">6 · Nothing participates</span> <span class="text-slate-600">— Every deployment on the day the attribute merges.</span></div>
+        </summary>
+        <div class="px-3.5 pb-3.5 pt-2.5 border-t border-slate-100 text-sm text-slate-600 space-y-2">
+          <p>Under #689 a dashboard built on <code>is_nested != true</code> returns exactly today's mixed histogram, and looks as if it applies a filter. Under the reversed valence it is empty until the outermost layer adopts.</p>
+        </div>
+      </details>
+
+      <details id="c7" class="group bg-white rounded-lg border border-slate-200 shadow-sm hover:bg-violet-50/60 hover:border-violet-300 transition-colors">
+        <summary class="px-3.5 py-2 flex items-baseline gap-2.5 text-sm leading-snug">
+          <span class="chev shrink-0 text-[10px] text-violet-500 transition-transform">▶</span>
+          <div><span class="font-semibold text-slate-900">7 · SQL vs PromQL</span> <span class="text-slate-600">— Backends treat a missing attribute differently under <code>!=</code>.</span></div>
+        </summary>
+        <div class="px-3.5 pb-3.5 pt-2.5 border-t border-slate-100 grid gap-4 lg:grid-cols-2 items-start text-sm">
+<pre class="code"><code><span class="c"># PromQL: a matcher that matches "" also selects</span>
+<span class="c"># series without the label</span>
+{<span class="a">is_nested</span><span class="k">!=</span><span class="s">"true"</span>}       <span class="c"># keeps absent</span>
+
+<span class="c"># SQL: NULL != TRUE is NULL, row dropped</span>
+<span class="k">WHERE</span> is_nested <span class="k">!=</span> TRUE   <span class="c"># drops absent</span>
+<span class="k">WHERE</span> is_nested <span class="k">IS DISTINCT FROM</span> TRUE  <span class="c"># keeps</span></code></pre>
+          <p class="text-slate-600">The same lenient filter silently turns strict in BigQuery- or ClickHouse-style backends. <code>is_root == true</code> means the same thing in both: absent never matches.</p>
+        </div>
+      </details>
+
+      <details id="c8" class="group bg-white rounded-lg border border-slate-200 shadow-sm hover:bg-violet-50/60 hover:border-violet-300 transition-colors">
+        <summary class="px-3.5 py-2 flex items-baseline gap-2.5 text-sm leading-snug">
+          <span class="chev shrink-0 text-[10px] text-violet-500 transition-transform">▶</span>
+          <div><span class="font-semibold text-slate-900">8 · A2A server across processes</span> <span class="text-slate-600">— Scoped to the process by design, so the server-side agent is top-level under both.</span></div>
+        </summary>
+        <div class="px-3.5 pb-3.5 pt-2.5 border-t border-slate-100 text-sm text-slate-600 space-y-2">
+          <p>A dashboard that aggregates across services counts the client's run and the server's run. Fixing that would need the flag in baggage, which is out of scope for both.</p>
+        </div>
+      </details>
+    </div>
+
+    <!-- Who must adopt -->
+    <div id="who" class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-3">
+      <p class="text-lg font-bold">Who has to adopt for the dashboard to be right</p>
+      <div class="grid gap-4 lg:grid-cols-2 text-sm">
+        <div class="rounded-xl border border-amber-200 bg-amber-50/60 p-3 space-y-1">
+          <p class="font-semibold text-amber-900">#689 (lenient filter)</p>
+          <p class="text-slate-600">The outermost layer writes the key, <strong>and every nested layer</strong> reads it and sets <code>true</code>. One holdout anywhere below skews the result.</p>
+          <p class="text-slate-600">The nested components do the work; the owner of the outer dashboard gets the benefit.</p>
+        </div>
+        <div class="rounded-xl border border-violet-200 bg-violet-50/60 p-3 space-y-1">
+          <p class="font-semibold text-violet-900">reversed</p>
+          <p class="text-slate-600">The <strong>outermost layer</strong> writes the key, reads it, and sets <code>true</code>. Nested non-participants are harmless. Nested participants must read the key to avoid case 3, which they do by definition.</p>
+          <p class="text-slate-600">The component that wants end-to-end points does the work.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── Proposal ───────────────────────── -->
+  <section id="proposal" class="space-y-6">
+    <h2 class="text-3xl font-bold">Proposal</h2>
+
+    <div class="space-y-3 text-sm">
+      <div class="rounded-xl bg-white border-l-4 border-violet-400 shadow-sm p-4"><p class="font-semibold">1. The value the query selects is the value instrumentations must set</p><p class="text-slate-600">The query selects top-level invocations, so <code>true</code> means top-level.</p></div>
+      <div class="rounded-xl bg-white border-l-4 border-violet-400 shadow-sm p-4"><p class="font-semibold">2. Define <code>true</code> as "no participating invocation is active"</p><p class="text-slate-600">That is the check an instrumentation can actually perform, so it promises nothing it can't deliver. Cases 3 and 4 are then documented limits, not violations.</p></div>
+      <div class="rounded-xl bg-white border-l-4 border-violet-400 shadow-sm p-4"><p class="font-semibold">3. Participants set both values</p><p class="text-slate-600"><code>false</code> rests on positive evidence, so it is always safe. With both set, absent means "doesn't participate", and consumers can query sub-agent latency with <code>== false</code>.</p></div>
+    </div>
+
+<pre class="code"><code><span class="c"># model/gen-ai/registry.yaml</span>
+<span class="del"><span class="k">-</span> <span class="a">key</span>: gen_ai.request.is_nested</span><span class="add"><span class="k">+</span> <span class="a">key</span>: gen_ai.request.is_root</span>  <span class="a">type</span>: boolean
+<span class="add"><span class="k">+</span> <span class="a">brief</span>: Whether no other agent invocation is active in the process.</span>  <span class="a">note</span>: |
+<span class="add"><span class="k">+</span>   `true` when no other `invoke_agent`, `invoke_workflow`, or</span><span class="add"><span class="k">+</span>   `invoke_{framework_entrypoint}` invocation tracked by an instrumentation</span><span class="add"><span class="k">+</span>   is active in the same process; `false` when one is.</span><span class="add"><span class="k">+</span></span><span class="add"><span class="k">+</span>   Invocations made by code that doesn't track invocations aren't visible,</span><span class="add"><span class="k">+</span>   so `true` doesn't guarantee there is no invocation further up.</span>    <span class="c"># + the existing SHOULDs on tracking in shared context keys</span>
+
+<span class="c"># model/gen-ai/spans.yaml, model/gen-ai/metrics.yaml</span>
+<span class="del"><span class="k">-</span> <span class="a">ref</span>: gen_ai.request.is_nested</span><span class="del"><span class="k">-</span>   <span class="a">conditionally_required</span>: When the invocation is nested.</span><span class="add"><span class="k">+</span> <span class="a">ref</span>: gen_ai.request.is_root</span><span class="add"><span class="k">+</span>   <span class="a">conditionally_required</span>: When the instrumentation tracks active invocations.</span></code></pre>
+
+    <div class="grid gap-4 lg:grid-cols-2 text-sm">
+      <div class="rounded-xl bg-white border border-slate-200 shadow-sm p-4 space-y-1">
+        <p class="font-semibold">Consumer guidance</p>
+        <p class="text-slate-600">End-to-end durations: <code>is_root == true</code>. Absent means the instrumentation doesn't track invocations; don't treat it as either value.</p>
+      </div>
+      <div class="rounded-xl bg-white border border-slate-200 shadow-sm p-4 space-y-1">
+        <p class="font-semibold">Name</p>
+        <p class="text-slate-600">"Root" already means the trace root span, and ADK's <code>root_agent</code>, which is nested when run through <code>AgentTool</code>. <code>is_top_level</code> (the wording #689's note already uses) avoids both.</p>
+      </div>
+    </div>
+
+    <div class="flex flex-wrap gap-2 text-sm">
+      <span class="chip bg-sky-100 text-sky-800">same tracking mechanism as #689</span>
+      <span class="chip bg-green-100 text-green-800">reference: flip the helper, set both values</span>
+      <span class="chip bg-slate-200 text-slate-700">cost: non-nesting libraries must adopt to appear</span>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── Alternatives ───────────────────────── -->
+  <section id="alternatives" class="space-y-6">
+    <h2 class="text-3xl font-bold">Alternatives considered</h2>
+    <div class="space-y-4">
+
+      <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-3">
+        <div class="flex items-center gap-2"><span class="chip bg-amber-400 text-amber-950">A</span><p class="font-semibold">#689 as is: <code>is_nested</code>, conditionally required when nested</p></div>
+        <p class="text-sm text-slate-600">Asserts only what it has positive evidence for. The cost lands on consumers: the obvious filter counts every non-participant as top-level.</p>
+        <div class="flex flex-wrap gap-2 text-sm">
+          <span class="chip bg-emerald-100 text-emerald-800">✓ single-layer apps work without adopting</span>
+          <span class="chip bg-rose-100 text-rose-800">✗ case 2 skews silently</span>
+          <span class="chip bg-rose-100 text-rose-800">✗ backend-dependent <code>!=</code></span>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-3">
+        <div class="flex items-center gap-2"><span class="chip bg-sky-500 text-white">B</span><p class="font-semibold"><code>is_nested</code>, set both ways by participants</p></div>
+        <p class="text-sm text-slate-600">Carries the same information as the proposal. Consumers who use <code>== false</code> get the proposal's behavior; those who write the more obvious <code>!= true</code> or <code>NOT is_nested</code> still get case 2. The safe query is the less obvious one.</p>
+        <div class="flex flex-wrap gap-2 text-sm">
+          <span class="chip bg-emerald-100 text-emerald-800">✓ smallest change to #689</span>
+          <span class="chip bg-rose-100 text-rose-800">✗ correctness depends on the consumer picking the strict filter</span>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-3">
+        <div class="flex items-center gap-2"><span class="chip bg-teal-500 text-white">C</span><p class="font-semibold">Integer depth, <code>0</code> = top-level</p></div>
+        <p class="text-sm text-slate-600"><code>depth == 0</code> drops absent points like the proposal. But depth counts only participating layers, so values above 0 vary with which frameworks adopted, and each level is another series.</p>
+        <div class="flex flex-wrap gap-2 text-sm">
+          <span class="chip bg-emerald-100 text-emerald-800">✓ fails loud</span>
+          <span class="chip bg-rose-100 text-rose-800">✗ depth > 0 unreliable</span>
+          <span class="chip bg-rose-100 text-rose-800">✗ more series</span>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-3">
+        <div class="flex items-center gap-2"><span class="chip bg-slate-500 text-white">D</span><p class="font-semibold">Derive end-to-end duration from spans</p></div>
+        <p class="text-sm text-slate-600">Span parent links already separate the layers, so a span-to-metrics pipeline can keep only spans whose parent isn't an <code>invoke_*</code>. That needs every <code>invoke_*</code> span exported unsampled, which the duration metric exists to avoid. Context loss (case 4) breaks it too.</p>
+      </div>
+
+    </div>
+  </section>
+
+</main>
+<script>
+function openTerm() {
+  const el = location.hash && document.querySelector(location.hash);
+  if (!el) return;
+  const det = el.tagName === "DETAILS" ? el : el.querySelector("details");
+  if (det) det.open = true;
+}
+addEventListener("hashchange", openTerm);
+openTerm();
+</script>
+</body>
+</html>
